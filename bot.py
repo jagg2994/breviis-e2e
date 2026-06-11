@@ -18,11 +18,14 @@ X-E2E-Seed-Token (env E2E_SEED_TOKEN) y usa las credenciales de la respuesta.
 import argparse
 import json
 import os
+import ssl
 import sys
 import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+import certifi
 
 import yaml
 from playwright.sync_api import sync_playwright, expect
@@ -48,7 +51,9 @@ def call_seed(base_url, token):
         method="POST",
         headers={"X-E2E-Seed-Token": token, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    # El Python de macOS no trae CAs configurados para urllib: usar certifi.
+    ctx = ssl.create_default_context(cafile=certifi.where())
+    with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
         body = json.loads(resp.read().decode())
     if not body.get("success"):
         raise RuntimeError(f"Seed falló: {body}")
@@ -77,8 +82,34 @@ class Runner:
 
     def locate(self, testid, nth=0):
         """N-ésimo elemento VISIBLE con ese data-testid."""
-        loc = self.page.get_by_test_id(testid).filter(visible=True)
-        return loc.nth(nth)
+        if testid == "booking-date-cell":
+            # Las celdas de días pasados llevan .disabled y no tienen onclick:
+            # el nth cuenta solo celdas elegibles.
+            loc = self.page.locator('[data-testid="booking-date-cell"]:not(.disabled)')
+        else:
+            loc = self.page.get_by_test_id(testid)
+        return loc.filter(visible=True).nth(nth)
+
+    def pick_slot(self, desde_nth=0, max_dias=6):
+        """Clickea celdas de fecha en orden hasta que aparezcan chips de hora
+        y elige el primero. Cubre días cerrados (domingo del seed) y días con
+        slots agotados (fin de jornada). Devuelve el texto del slot elegido."""
+        for n in range(desde_nth, desde_nth + max_dias):
+            cell = self.locate("booking-date-cell", n)
+            if cell.count() == 0:
+                break
+            cell.click()
+            chips = self.page.get_by_test_id("booking-time-chip").filter(visible=True)
+            try:
+                chips.first.wait_for(timeout=6000)
+            except Exception:
+                continue  # sin horarios este día: probar el siguiente
+            slot_text = chips.first.inner_text().strip()
+            chips.first.click()
+            return slot_text
+        raise AssertionError(
+            f"Sin slots disponibles en {max_dias} días desde la celda {desde_nth}"
+        )
 
     # ── ejecución ────────────────────────────────────────────────────────
 
@@ -122,6 +153,8 @@ class Runner:
                 if expecting_dialog:
                     expecting_dialog = False
                 self.page.wait_for_load_state("domcontentloaded")
+            elif accion == "pick_slot":
+                self.pick_slot(paso.get("desde_nth", 0))
             elif accion == "fill":
                 self.locate(paso["testid"], paso.get("nth", 0)).fill(
                     self.fill_value(paso["valor"])

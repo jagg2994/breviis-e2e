@@ -1,0 +1,97 @@
+name: Run E2E
+
+# Corre bot_QA_BREVIIS contra el entorno develop. Se dispara:
+#  - por repository_dispatch (type e2e-run) desde mvp_breviis (workflow
+#    e2e-sync, tras cada push a develop que toca flujos de usuario), o
+#  - manualmente (workflow_dispatch).
+# Si hay fallos, abre/actualiza un issue en BREVIIS/mvp_breviis con label
+# e2e-failure. Plan: mvp_breviis/docs/NEXT_STEPS.md tarea D4.
+on:
+  repository_dispatch:
+    types: [e2e-run]
+  workflow_dispatch:
+    inputs:
+      flows:
+        description: "IDs de flujo separados por espacio (vacio = todos)"
+        required: false
+        default: ""
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          python3 -m playwright install --with-deps chromium
+
+      - name: Correr la suite
+        id: run
+        env:
+          E2E_SEED_TOKEN: ${{ secrets.E2E_SEED_TOKEN }}
+        run: |
+          if [ -z "$E2E_SEED_TOKEN" ]; then
+            echo "::error::Falta el secret E2E_SEED_TOKEN (mismo valor que en Easypanel dev)."
+            exit 1
+          fi
+          FLOWS="${{ github.event.inputs.flows }}"
+          set +e
+          if [ -n "$FLOWS" ]; then
+            python3 bot.py --headless -f $FLOWS
+          else
+            python3 bot.py --headless
+          fi
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Publicar evidencia
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-output
+          path: output/
+          if-no-files-found: ignore
+
+      - name: Reportar fallo en mvp_breviis
+        if: steps.run.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ secrets.E2E_REPORT_TOKEN }}
+          SHA: ${{ github.event.client_payload.sha }}
+          MSG: ${{ github.event.client_payload.commit_message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::Falta E2E_REPORT_TOKEN; no se puede abrir el issue en mvp_breviis."
+            exit 1
+          fi
+          REPORT=$(ls -t output/flow_status/run_*.json | head -1)
+          FAILED=$(python3 -c "
+          import json,sys
+          r=json.load(open('$REPORT'))['results']
+          print(', '.join(x['flow_id'] for x in r if x['status']!='pass'))")
+          BODY=$(python3 -c "
+          import json
+          r=json.load(open('$REPORT'))
+          lines=[f\"Corrida de bot_QA_BREVIIS contra develop\", \"\",
+                 f\"**Commit origen:** ${SHA:-manual} — ${MSG:-}\",
+                 f\"**Evidencia (artifact):** ${RUN_URL}\", \"\", \"| Flujo | Estado | Error |\", \"|---|---|---|\"]
+          for x in r['results']:
+              err=(x['error'] or '').split(chr(10))[0][:160]
+              lines.append(f\"| {x['flow_id']} | {x['status']} | {err} |\")
+          print(chr(10).join(lines))")
+          gh issue create -R BREVIIS/mvp_breviis \
+            --title "[e2e] Falló ${FAILED} en develop" \
+            --label e2e-failure \
+            --body "$BODY"
+          exit 1
+
+      - name: Resultado
+        if: steps.run.outputs.exit_code == '0'
+        run: echo "Suite E2E en verde."

@@ -16,7 +16,7 @@
 #     impl:          declarativa (el runner interpreta `pasos`) | custom
 #                    (función en flows/ del bot; los pasos son documentación)
 #     pasos:         lista ordenada de acciones:
-#                    { accion: goto|click|fill|select|check|expect_dialog,
+#                    { accion: goto|click|fill|select|check|expect_dialog|pick_slot,
 #                      testid: ..., nth: 0, valor: ..., nota: ... }
 #                    `nth` desambigua elementos repetidos (0-based, sobre
 #                    elementos VISIBLES). `expect_dialog` acepta el confirm()
@@ -48,12 +48,12 @@ flows:
       - { accion: goto }
       # nth=0 es la card "sin preferencia" cuando hay >1 staff; un staff real es nth>=1
       - { accion: click, testid: booking-staff-card, nth: 1 }
+      - { accion: click, testid: booking-category-header, nth: 0, nota: "expandir el acordeón de la categoría (las cards colapsadas interceptan el click)" }
       - { accion: click, testid: booking-service-card, nth: 0 }
       - { accion: click, testid: booking-btn-continue-step1 }
-      - { accion: click, testid: booking-date-cell, nth: 0, nota: "primera fecha habilitada (el bot salta celdas disabled)" }
-      - { accion: click, testid: booking-time-chip, nth: 0 }
+      - { accion: pick_slot, desde_nth: 0, nota: "prueba fechas en orden hasta hallar horarios (salta días cerrados/agotados) y elige el primer chip" }
       - { accion: click, testid: booking-btn-continue-step2 }
-      - { accion: fill, testid: booking-input-name, valor: "E2E Test C1" }
+      - { accion: fill, testid: booking-input-name, valor: "Cliente Prueba Uno" }
       - { accion: fill, testid: booking-input-email, valor: "e2e-c1@test.breviis.com" }
       - { accion: fill, testid: booking-input-phone, valor: "+573001110001" }
       - { accion: click, testid: booking-btn-submit }
@@ -70,12 +70,12 @@ flows:
     pasos:
       - { accion: goto }
       - { accion: click, testid: booking-staff-card, nth: 0, nota: "card 'sin preferencia' (existe solo si hay >1 staff)" }
+      - { accion: click, testid: booking-category-header, nth: 0, nota: "expandir el acordeón de la categoría (las cards colapsadas interceptan el click)" }
       - { accion: click, testid: booking-service-card, nth: 0 }
       - { accion: click, testid: booking-btn-continue-step1 }
-      - { accion: click, testid: booking-date-cell, nth: 0 }
-      - { accion: click, testid: booking-time-chip, nth: 0 }
+      - { accion: pick_slot, desde_nth: 0 }
       - { accion: click, testid: booking-btn-continue-step2 }
-      - { accion: fill, testid: booking-input-name, valor: "E2E Test C2" }
+      - { accion: fill, testid: booking-input-name, valor: "Cliente Prueba Dos" }
       - { accion: fill, testid: booking-input-email, valor: "e2e-c2@test.breviis.com" }
       - { accion: fill, testid: booking-input-phone, valor: "+573001110002" }
       - { accion: click, testid: booking-btn-submit }
@@ -92,13 +92,13 @@ flows:
     pasos:
       - { accion: goto }
       - { accion: click, testid: booking-staff-card, nth: 0 }
+      - { accion: click, testid: booking-category-header, nth: 0, nota: "expandir el acordeón de la categoría (las cards colapsadas interceptan el click)" }
       - { accion: click, testid: booking-service-card, nth: 0 }
       - { accion: click, testid: booking-service-card, nth: 1 }
       - { accion: click, testid: booking-btn-continue-step1 }
-      - { accion: click, testid: booking-date-cell, nth: 0 }
-      - { accion: click, testid: booking-time-chip, nth: 0 }
+      - { accion: pick_slot, desde_nth: 1, nota: "desde mañana — C3 dura ~105min; reparte carga frente a C1/C2/C10" }
       - { accion: click, testid: booking-btn-continue-step2 }
-      - { accion: fill, testid: booking-input-name, valor: "E2E Test C3" }
+      - { accion: fill, testid: booking-input-name, valor: "Cliente Prueba Tres" }
       - { accion: fill, testid: booking-input-email, valor: "e2e-c3@test.breviis.com" }
       - { accion: fill, testid: booking-input-phone, valor: "+573001110003" }
       - { accion: click, testid: booking-btn-submit }
@@ -140,7 +140,7 @@ flows:
     entrada: "/{slug}/admin/bookings"
     requiere_login: true
     precondicion: ">=1 reserva PENDING (crear vía C1 si no hay)"
-    impl: declarativa
+    impl: custom   # crea su precondición (C1) antes de filtrar
     pasos:
       - { accion: goto }
       - { accion: click, testid: bookings-filter-pending }
