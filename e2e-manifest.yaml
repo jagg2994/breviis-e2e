@@ -1,0 +1,188 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Manifiesto E2E — versión legible por máquina de docs/E2E_TESTS.md
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Consumidor: el bot del repo `breviis-e2e` (Fase D de docs/NEXT_STEPS.md).
+# Los IDs de flujo son los de docs/E2E_TESTS.md (lenguaje compartido).
+# Los `testid` referencian docs/E2E_SELECTORS.md (contrato intocable).
+#
+# Esquema:
+#   flows.<ID>:
+#     nombre:        descripción corta
+#     prioridad:     critica | alta | media
+#     entrada:       path inicial ({slug} se reemplaza por tenant_slug)
+#     requiere_login: bool — si true, el bot ejecuta primero el flujo A1
+#     precondicion:  estado que el bot debe garantizar antes (seed o flujo previo)
+#     impl:          declarativa (el runner interpreta `pasos`) | custom
+#                    (función en flows/ del bot; los pasos son documentación)
+#     pasos:         lista ordenada de acciones:
+#                    { accion: goto|click|fill|select|check|expect_dialog,
+#                      testid: ..., nth: 0, valor: ..., nota: ... }
+#                    `nth` desambigua elementos repetidos (0-based, sobre
+#                    elementos VISIBLES). `expect_dialog` acepta el confirm()
+#                    nativo del paso siguiente.
+#     esperado:      aserciones: { tipo: visible|texto|url_contiene,
+#                                  testid: ..., valor: ... }
+#
+# Validar sintaxis:
+#   python3 -c "import yaml; yaml.safe_load(open('docs/e2e-manifest.yaml'))"
+# ═══════════════════════════════════════════════════════════════════════
+
+base_url_dev: "https://breviis-dev.oiz33t.easypanel.host"
+tenant_slug: "e2e-demo"          # lo garantiza el seed (Fase C: POST /api/dev/seed-e2e)
+admin_email: "e2e-admin@breviis.com"   # credencial del seed
+
+flows:
+
+  # ── Público: /book/{slug} ────────────────────────────────────────────
+  # Wizard de 3 pasos: (1) especialista + servicios → (2) fecha y hora
+  # (+ banner waitlist) → (3) datos del cliente → página de confirmación.
+
+  C1:
+    nombre: "Reservar servicio con staff específico"
+    prioridad: critica
+    entrada: "/book/{slug}"
+    requiere_login: false
+    impl: declarativa
+    pasos:
+      - { accion: goto }
+      # nth=0 es la card "sin preferencia" cuando hay >1 staff; un staff real es nth>=1
+      - { accion: click, testid: booking-staff-card, nth: 1 }
+      - { accion: click, testid: booking-service-card, nth: 0 }
+      - { accion: click, testid: booking-btn-continue-step1 }
+      - { accion: click, testid: booking-date-cell, nth: 0, nota: "primera fecha habilitada (el bot salta celdas disabled)" }
+      - { accion: click, testid: booking-time-chip, nth: 0 }
+      - { accion: click, testid: booking-btn-continue-step2 }
+      - { accion: fill, testid: booking-input-name, valor: "E2E Test C1" }
+      - { accion: fill, testid: booking-input-email, valor: "e2e-c1@test.breviis.com" }
+      - { accion: fill, testid: booking-input-phone, valor: "+573001110001" }
+      - { accion: click, testid: booking-btn-submit }
+    esperado:
+      - { tipo: visible, testid: confirmation-content }
+      - { tipo: visible, testid: confirmation-pending-notice, nota: "la reserva nace PENDING" }
+
+  C2:
+    nombre: "Reservar sin preferencia de staff"
+    prioridad: critica
+    entrada: "/book/{slug}"
+    requiere_login: false
+    impl: declarativa
+    pasos:
+      - { accion: goto }
+      - { accion: click, testid: booking-staff-card, nth: 0, nota: "card 'sin preferencia' (existe solo si hay >1 staff)" }
+      - { accion: click, testid: booking-service-card, nth: 0 }
+      - { accion: click, testid: booking-btn-continue-step1 }
+      - { accion: click, testid: booking-date-cell, nth: 0 }
+      - { accion: click, testid: booking-time-chip, nth: 0 }
+      - { accion: click, testid: booking-btn-continue-step2 }
+      - { accion: fill, testid: booking-input-name, valor: "E2E Test C2" }
+      - { accion: fill, testid: booking-input-email, valor: "e2e-c2@test.breviis.com" }
+      - { accion: fill, testid: booking-input-phone, valor: "+573001110002" }
+      - { accion: click, testid: booking-btn-submit }
+    esperado:
+      - { tipo: visible, testid: confirmation-content }
+
+  C3:
+    nombre: "Reserva multi-servicio"
+    prioridad: critica
+    entrada: "/book/{slug}"
+    requiere_login: false
+    precondicion: "el tenant tiene >=2 servicios (seed)"
+    impl: declarativa
+    pasos:
+      - { accion: goto }
+      - { accion: click, testid: booking-staff-card, nth: 0 }
+      - { accion: click, testid: booking-service-card, nth: 0 }
+      - { accion: click, testid: booking-service-card, nth: 1 }
+      - { accion: click, testid: booking-btn-continue-step1 }
+      - { accion: click, testid: booking-date-cell, nth: 0 }
+      - { accion: click, testid: booking-time-chip, nth: 0 }
+      - { accion: click, testid: booking-btn-continue-step2 }
+      - { accion: fill, testid: booking-input-name, valor: "E2E Test C3" }
+      - { accion: fill, testid: booking-input-email, valor: "e2e-c3@test.breviis.com" }
+      - { accion: fill, testid: booking-input-phone, valor: "+573001110003" }
+      - { accion: click, testid: booking-btn-submit }
+    esperado:
+      - { tipo: visible, testid: confirmation-content }
+
+  C10:
+    nombre: "Anti doble reserva: mismo slot dos veces"
+    prioridad: critica
+    entrada: "/book/{slug}"
+    requiere_login: false
+    precondicion: "ejecuta C1 internamente y reintenta el MISMO staff+fecha+slot"
+    impl: custom   # dos pasadas coordinadas; la función guarda el slot de la 1ª
+    pasos:
+      - { nota: "1ª pasada = flujo C1 completo (reserva creada)" }
+      - { nota: "2ª pasada: mismo staff, misma fecha; si el slot ya no se ofrece en la UI → PASS; si se ofrece y el submit falla con error visible → PASS" }
+    esperado:
+      - { tipo: visible, testid: booking-error, nota: "solo aplica en la variante de submit; texto de error claro, no 500" }
+
+  # ── Admin: login y gestión de reservas ───────────────────────────────
+
+  A1:
+    nombre: "Login tenant admin"
+    prioridad: critica
+    entrada: "/auth/login"
+    requiere_login: false
+    impl: declarativa
+    pasos:
+      - { accion: goto }
+      - { accion: fill, testid: login-input-email, valor: "{admin_email}" }
+      - { accion: fill, testid: login-input-password, valor: "{admin_password}", nota: "viene de la respuesta del seed, no se versiona" }
+      - { accion: click, testid: login-btn-submit }
+    esperado:
+      - { tipo: url_contiene, valor: "/admin/dashboard" }
+
+  A5:
+    nombre: "Lista de reservas: filtro Pendientes"
+    prioridad: alta
+    entrada: "/{slug}/admin/bookings"
+    requiere_login: true
+    precondicion: ">=1 reserva PENDING (crear vía C1 si no hay)"
+    impl: declarativa
+    pasos:
+      - { accion: goto }
+      - { accion: click, testid: bookings-filter-pending }
+    esperado:
+      - { tipo: visible, testid: bookings-row }
+      - { tipo: url_contiene, valor: "status=PENDING" }
+
+  A6:
+    nombre: "Aceptar reserva PENDING con staff asignado"
+    prioridad: critica
+    entrada: "/{slug}/admin/bookings?status=PENDING"
+    requiere_login: true
+    precondicion: "reserva PENDING con staff (la crea C1)"
+    impl: custom   # debe abrir el detalle de LA reserva creada por C1 (match por fila)
+    pasos:
+      - { nota: "abrir bookings-row de la reserva objetivo → en el detalle, click booking-detail-btn-accept" }
+    esperado:
+      - { tipo: texto, testid: booking-detail-status, valor: "Confirmada" }
+
+  A7:
+    nombre: "Aceptar PENDING sin staff → modal asignar y aceptar"
+    prioridad: critica
+    entrada: "/{slug}/admin/bookings?status=PENDING"
+    requiere_login: true
+    precondicion: "reserva PENDING sin staff (la crea C2)"
+    impl: custom
+    pasos:
+      - { nota: "en la fila objetivo, bookings-btn-accept abre el modal (la reserva no tiene staff)" }
+      - { accion: select, testid: bookings-assign-staff-select, nth: 0, nota: "elegir primera opción elegible" }
+      - { accion: click, testid: bookings-assign-btn-submit }
+    esperado:
+      - { tipo: visible, testid: bookings-row, nota: "vuelve a la lista; verificar después estado Confirmada en el detalle" }
+
+  A9:
+    nombre: "Rechazar reserva PENDING"
+    prioridad: critica
+    entrada: "/{slug}/admin/bookings?status=PENDING"
+    requiere_login: true
+    precondicion: "reserva PENDING (crear vía C1)"
+    impl: custom
+    pasos:
+      - { accion: expect_dialog, nota: "el botón dispara confirm() nativo — aceptarlo" }
+      - { accion: click, testid: bookings-btn-reject, nota: "en la fila objetivo (versión visible: desktop o mobile)" }
+    esperado:
+      - { tipo: texto, testid: booking-detail-status, valor: "Rechazada", nota: "verificado abriendo el detalle de la reserva" }
