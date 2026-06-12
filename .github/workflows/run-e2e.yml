@@ -86,10 +86,15 @@ jobs:
               err=(x['error'] or '').split(chr(10))[0][:160]
               lines.append(f\"| {x['flow_id']} | {x['status']} | {err} |\")
           print(chr(10).join(lines))")
-          gh issue create -R BREVIIS/mvp_breviis \
+          ISSUE_URL=$(gh issue create -R BREVIIS/mvp_breviis \
             --title "[e2e] Falló ${FAILED} en develop" \
             --label e2e-failure \
-            --body "$BODY"
+            --body "$BODY")
+          echo "Issue creado: $ISSUE_URL"
+          # E2: agregar al tablero (GitHub Project Breviis, org BREVIIS #1).
+          # Requiere que E2E_REPORT_TOKEN tenga scope `project` ademas de repo.
+          gh project item-add 1 --owner BREVIIS --url "$ISSUE_URL" \
+            || echo "::warning::No se pudo agregar al tablero (¿el PAT tiene scope project?). Issue creado igual."
           exit 1
 
       - name: Resultado
